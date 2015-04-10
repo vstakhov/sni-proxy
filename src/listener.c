@@ -40,7 +40,6 @@
 
 struct ssl_session {
 	const ucl_object_t *backends;
-	int fd;
 	ev_io io;
 	struct ev_loop *loop;
 	char *hostname;
@@ -50,6 +49,8 @@ struct ssl_session {
 		ssl_state_alert,
 		ssl_state_alert_sent,
 	} state;
+	int fd;
+	uint8_t ssl_version[2];
 };
 
 #if defined(__GNUC__)
@@ -75,11 +76,12 @@ static const unsigned int tls_alert_level = 0x2;
 static const unsigned int tls_alert_description = 0x28;
 
 struct ssl_header {
-	unsigned char tls_magic[3];
+	uint8_t tls_type;
+	uint8_t ssl_version[2]; /* 3 bytes of magic we'd expect */
 	uint8_t len[2];
 	uint8_t type;
 	uint8_t greeting_len[3];
-	uint16_t version;
+	uint16_t tls_version;
 	uint8_t random[32];
 } _PACKED;
 
@@ -130,8 +132,7 @@ alert_cb(EV_P_ ev_io *w, int revents)
 
 	if (ssl->state == ssl_state_alert) {
 		alert.type = tls_alert;
-		alert.version[0] = 0x03;
-		alert.version[1] = 0x01;
+		memcpy (alert.version, ssl->ssl_version, 2);
 		alert.len[1] = 2;
 		alert.level = tls_alert_level;
 		alert.description = tls_alert_description;
@@ -210,9 +211,10 @@ parse_ssl_greeting(struct ssl_session *ssl, const char *buf, int len)
 	}
 
 	sslh = (const struct ssl_header *)p;
+	memcpy (ssl->ssl_version, sslh->ssl_version, 2);
 
 	/* Not an SSL packet */
-	if (memcmp(sslh->tls_magic, tls_magic, sizeof(tls_magic)) != 0 ||
+	if (memcmp(&sslh->tls_type, tls_magic, sizeof(tls_magic)) != 0 ||
 		sslh->type != tls_greeting ||
 		int_2byte_be(sslh->len) != len - 5 ||
 		int_3byte_be(sslh->greeting_len) != len - 5 - 4) {
@@ -336,6 +338,9 @@ accept_cb(EV_P_ ev_io *w, int revents)
 		ssl->backends = w->data;
 		ssl->loop = loop;
 		ssl->fd = nfd;
+		/* TLS 1.0 (SSL 3.1) */
+		ssl->ssl_version[0] = 0x3;
+		ssl->ssl_version[0] = 0x1;
 		ev_io_init(&ssl->io, greet_cb, nfd, EV_READ);
 		ev_io_start(loop, &ssl->io);
 	}
