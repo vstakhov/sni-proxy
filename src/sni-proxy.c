@@ -133,7 +133,7 @@ main(int argc, char **argv) {
 
 	char ch;
 
-	while ((ch = getopt_long(argc, argv, "chb", long_options, NULL)) != -1) {
+	while ((ch = getopt_long(argc, argv, "c:hb:", long_options, NULL)) != -1) {
 		switch (ch) {
 		case 'c':
 			cf_name = strdup(optarg);

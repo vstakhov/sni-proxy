@@ -71,7 +71,7 @@ static const unsigned int sni_type = 0x0;
 static const unsigned int sni_host = 0x0;
 static const unsigned int tls_alert = 0x15;
 static const unsigned int tls_alert_level = 0x2;
-static const unsigned int tls_alert_description = 0x40;
+static const unsigned int tls_alert_description = 0x28;
 
 struct ssl_header {
 	unsigned char tls_magic[3];
@@ -98,18 +98,18 @@ struct ssl_alert {
 } _PACKED;
 
 static inline unsigned int
-int_3byte_le(const unsigned char *p) {
+int_3byte_be(const unsigned char *p) {
 	return
-	(((unsigned int)(p[0])      ) |
+	(((unsigned int)(p[2])      ) |
 	 ((unsigned int)(p[1]) <<  8) |
-	 ((unsigned int)(p[2]) << 16));
+	 ((unsigned int)(p[0]) << 16));
 }
 
 static inline unsigned int
-int_2byte_le(const unsigned char *p) {
+int_2byte_be(const unsigned char *p) {
 	return
-	(((unsigned int)(p[0])      ) |
-	 ((unsigned int)(p[1]) <<  8));
+	(((unsigned int)(p[1])      ) |
+	 ((unsigned int)(p[0]) <<  8));
 }
 
 static void
@@ -130,7 +130,7 @@ alert_cb(EV_P_ ev_io *w, int revents)
 	if (ssl->state == ssl_state_alert) {
 		alert.type = tls_alert;
 		alert.version[0] = 0x03;
-		alert.version[0] = 0x01;
+		alert.version[1] = 0x01;
 		alert.len[1] = 2;
 		alert.level = tls_alert_level;
 		alert.description = tls_alert_description;
@@ -164,8 +164,8 @@ parse_extension(struct ssl_session *ssl, const unsigned char *pos, int remain)
 		return 0;
 	}
 
-	type = int_2byte_le(pos);
-	tlen = int_2byte_le(pos + 2);
+	type = int_2byte_be(pos);
+	tlen = int_2byte_be(pos + 2);
 
 	if (tlen > remain) {
 		return -1;
@@ -176,14 +176,14 @@ parse_extension(struct ssl_session *ssl, const unsigned char *pos, int remain)
 			return -1;
 		}
 
-		sni = (const struct sni_ext *)pos + 4;
-		if (int_2byte_le(sni->slen) != tlen - 2 ||
+		sni = (const struct sni_ext *)(pos + 4);
+		if (int_2byte_be(sni->slen) != tlen - 2 ||
 			sni->type != sni_host ||
-			int_2byte_le(sni->hlen) != tlen - 3) {
+			int_2byte_be(sni->hlen) != tlen - 5) {
 			return -1;
 		}
 
-		hlen = int_2byte_le(sni->hlen);
+		hlen = int_2byte_be(sni->hlen);
 		ssl->hostname = xmalloc(hlen + 1);
 		memcpy(ssl->hostname, sni->host, hlen);
 		ssl->hostname[hlen] = '\0';
@@ -212,8 +212,8 @@ parse_ssl_greeting(struct ssl_session *ssl, const char *buf, int len)
 	/* Not an SSL packet */
 	if (memcmp(sslh->tls_magic, tls_magic, sizeof(tls_magic)) != 0 ||
 		sslh->type != tls_greeting ||
-		int_2byte_le(sslh->len) != len - 5 ||
-		int_3byte_le(sslh->greeting_len) != len - 5 - 4) {
+		int_2byte_be(sslh->len) != len - 5 ||
+		int_3byte_be(sslh->greeting_len) != len - 5 - 4) {
 		goto err;
 	}
 
@@ -229,7 +229,7 @@ parse_ssl_greeting(struct ssl_session *ssl, const char *buf, int len)
 	remain -= tlen + 1;
 
 	/* Cipher suite */
-	tlen = int_2byte_le(p);
+	tlen = int_2byte_be(p);
 	if (tlen >= remain + 4) {
 		goto err;
 	}
@@ -245,7 +245,7 @@ parse_ssl_greeting(struct ssl_session *ssl, const char *buf, int len)
 	remain -= tlen + 1;
 
 	/* Now extensions */
-	tlen = int_2byte_le(p);
+	tlen = int_2byte_be(p);
 	if (tlen > remain) {
 		goto err;
 	}
@@ -387,16 +387,17 @@ bool
 start_listen(struct ev_loop *loop, int port, const ucl_object_t *backends)
 {
 	struct addrinfo ai, *res, *cur_ai;
-	int sock, ret;
+	int sock, r;
 	ev_io *watcher;
+	bool ret = false;
 
 	memset(&ai, 0, sizeof(ai));
 	ai.ai_family = AF_UNSPEC;
 	ai.ai_flags = AI_PASSIVE|AI_NUMERICSERV;
 	ai.ai_socktype = SOCK_STREAM;
 
-	if ((ret = getaddrinfo(NULL, port_to_str(port), &ai, &res)) != 0) {
-		fprintf(stderr, "getaddrinfo: *:%d: %s\n", port, gai_strerror(ret));
+	if ((r = getaddrinfo(NULL, port_to_str(port), &ai, &res)) != 0) {
+		fprintf(stderr, "getaddrinfo: *:%d: %s\n", port, gai_strerror(r));
 		return false;
 	}
 
@@ -407,15 +408,17 @@ start_listen(struct ev_loop *loop, int port, const ucl_object_t *backends)
 
 		if (sock == -1) {
 			fprintf(stderr, "socket listen: %s\n", strerror(errno));
-			return false;
+			cur_ai = cur_ai->ai_next;
+			continue;
 		}
 
 		watcher = xmalloc0(sizeof(*watcher));
 		watcher->data = (void *)backends;
 		ev_io_init(watcher, accept_cb, sock, EV_READ);
 		ev_io_start(loop, watcher);
+		ret = true;
 		cur_ai = cur_ai->ai_next;
 	}
 
-	return true;
+	return ret;
 }
