@@ -1,0 +1,3 @@
+[submodule "ucl"]
+	path = ucl
+	url = https://github.com/vstakhov/libucl
