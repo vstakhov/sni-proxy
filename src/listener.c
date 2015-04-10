@@ -44,6 +44,7 @@ struct ssl_session {
 	ev_io io;
 	struct ev_loop *loop;
 	char *hostname;
+	unsigned hostlen;
 	enum {
 		ssl_state_init = 0,
 		ssl_state_alert,
@@ -186,6 +187,7 @@ parse_extension(struct ssl_session *ssl, const unsigned char *pos, int remain)
 		hlen = int_2byte_be(sni->hlen);
 		ssl->hostname = xmalloc(hlen + 1);
 		memcpy(ssl->hostname, sni->host, hlen);
+		ssl->hostlen = hlen;
 		ssl->hostname[hlen] = '\0';
 	}
 
