@@ -27,6 +27,7 @@
 
 #include "ev.h"
 #include "ucl.h"
+#include "ringbuf.h"
 
 struct ssl_session {
 	const ucl_object_t *backends;
@@ -34,6 +35,8 @@ struct ssl_session {
 	ev_io bk_io;
 	struct ev_loop *loop;
 	char *hostname;
+	struct ringbuf *cl2bk;
+	struct ringbuf *bk2cl;
 	unsigned hostlen;
 	enum {
 		ssl_state_init = 0,

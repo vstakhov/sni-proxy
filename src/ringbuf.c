@@ -35,7 +35,7 @@
 #include "util.h"
 
 struct ringbuf*
-ringbuf_create(size_t len, uint8_t *init, size_t initlen)
+ringbuf_create(size_t len, const uint8_t *init, size_t initlen)
 {
 	struct ringbuf *r;
 	size_t real_len;
@@ -46,6 +46,10 @@ ringbuf_create(size_t len, uint8_t *init, size_t initlen)
 	r->end = r->buf + real_len;
 	r->read_pos = initlen;
 	r->write_pos = 0;
+
+	if (init) {
+		memcpy(r->buf, init, initlen);
+	}
 
 	return r;
 }

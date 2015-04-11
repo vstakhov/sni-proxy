@@ -38,7 +38,7 @@ struct ringbuf {
 	int write_pos;
 };
 
-struct ringbuf* ringbuf_create(size_t len, uint8_t *init, size_t initlen);
+struct ringbuf* ringbuf_create(size_t len, const uint8_t *init, size_t initlen);
 
 bool ringbuf_can_read(struct ringbuf *r);
 bool ringbuf_can_write(struct ringbuf *r);
