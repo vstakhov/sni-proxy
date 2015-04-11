@@ -37,21 +37,7 @@
 #include "ev.h"
 #include "ucl.h"
 #include "util.h"
-
-struct ssl_session {
-	const ucl_object_t *backends;
-	ev_io io;
-	struct ev_loop *loop;
-	char *hostname;
-	unsigned hostlen;
-	enum {
-		ssl_state_init = 0,
-		ssl_state_alert,
-		ssl_state_alert_sent,
-	} state;
-	int fd;
-	uint8_t ssl_version[2];
-};
+#include "sni-private.h"
 
 #if defined(__GNUC__)
 #  define _PACKED __attribute__ ((packed))
@@ -115,12 +101,13 @@ int_2byte_be(const unsigned char *p) {
 	 ((unsigned int)(p[0]) <<  8));
 }
 
-static void
+void
 terminate_session(struct ssl_session *ssl)
 {
 	ev_io_stop(ssl->loop, &ssl->io);
 	close(ssl->fd);
 	free(ssl->hostname);
+	free(ssl->saved_buf);
 	free(ssl);
 }
 
@@ -145,12 +132,77 @@ alert_cb(EV_P_ ev_io *w, int revents)
 	}
 }
 
-static void
+void
 send_alert(struct ssl_session *ssl)
 {
 	ssl->state = ssl_state_alert;
 	ev_io_init(&ssl->io, alert_cb, ssl->fd, EV_WRITE);
 	ev_io_start(ssl->loop, &ssl->io);
+}
+
+static void
+backend_connect_cb(EV_P_ ev_io *w, int revents)
+{
+	struct ssl_session *ssl = w->data;
+
+	ev_io_stop(ssl->loop, &ssl->bk_io);
+	printf("connected to hostname: %s\n", ssl->hostname);
+	send_alert(ssl);
+}
+
+static void
+connect_backend(struct ssl_session *ssl, const struct addrinfo *ai)
+{
+	int sock, ofl;
+
+	/* TODO: Need upstreams support here */
+	sock = socket(ai->ai_family, SOCK_STREAM, 0);
+
+	if (sock == -1) {
+		goto err;
+	}
+
+	if (fcntl(sock, F_SETFD, FD_CLOEXEC) == -1) {
+		close(sock);
+
+		goto err;
+	}
+
+	ofl = fcntl(sock, F_GETFL, 0);
+
+	if (fcntl(sock, F_SETFL, ofl | O_NONBLOCK) == -1) {
+		close(sock);
+
+		goto err;
+	}
+
+	while (connect (sock, ai->ai_addr, ai->ai_addrlen) == -1) {
+
+		if (errno == EINTR) {
+			continue;
+		}
+
+		if (errno != EINPROGRESS) {
+			close(sock);
+
+			goto err;
+		}
+		else {
+			break;
+		}
+	}
+
+	ssl->bk_fd = sock;
+	ssl->state = ssl_state_backend_ready;
+
+	ssl->bk_io.data = ssl;
+	ev_io_init(&ssl->bk_io, backend_connect_cb, sock, EV_WRITE);
+	ev_io_start(ssl->loop, &ssl->bk_io);
+
+	return;
+
+err:
+	send_alert(ssl);
 }
 
 static int
@@ -202,6 +254,7 @@ parse_ssl_greeting(struct ssl_session *ssl, const char *buf, int len)
 	int remain = len, ret;
 	unsigned int tlen;
 	const struct ssl_header *sslh;
+	const ucl_object_t *bk = NULL, *sa = NULL;
 
 	ev_io_stop(ssl->loop, &ssl->io);
 
@@ -263,9 +316,39 @@ parse_ssl_greeting(struct ssl_session *ssl, const char *buf, int len)
 	}
 
 	if (ret == 0) {
-		printf("got hostname: %s\n", ssl->hostname);
-		send_alert(ssl);
-		return;
+		/* Here we can select a backend */
+		if (ssl->hostname != NULL) {
+			bk = ucl_object_find_keyl(ssl->backends, ssl->hostname, ssl->hostlen);
+		}
+
+		if (bk == NULL) {
+			/* Try to select default backend */
+			bk = ucl_object_find_key(ssl->backends, "default");
+		}
+
+		if (bk == NULL) {
+			/* Cowardly give up */
+			fprintf(stderr, "cannot found hostname: %s\n", ssl->hostname);
+			send_alert(ssl);
+			return;
+		}
+		else {
+			sa = ucl_object_find_key(bk, "ai");
+
+			if (sa == NULL) {
+				/* Should not happen */
+				send_alert(ssl);
+				return;
+			}
+
+			ssl->state = ssl_state_backend_selected;
+			ssl->saved_buf = xmalloc(len);
+			memcpy(ssl->saved_buf, buf, len);
+			ssl->buflen = len;
+			connect_backend(ssl, sa->value.ud);
+
+			return;
+		}
 	}
 err:
 	send_alert(ssl);
