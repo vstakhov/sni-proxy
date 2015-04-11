@@ -248,9 +248,9 @@ parse_extension(struct ssl_session *ssl, const unsigned char *pos, int remain)
 }
 
 static void
-parse_ssl_greeting(struct ssl_session *ssl, const char *buf, int len)
+parse_ssl_greeting(struct ssl_session *ssl, const unsigned char *buf, int len)
 {
-	const char *p = buf;
+	const unsigned char *p = buf;
 	int remain = len, ret;
 	unsigned int tlen;
 	const struct ssl_header *sslh;

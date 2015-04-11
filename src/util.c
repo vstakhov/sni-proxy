@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <limits.h>
+#include <string.h>
 #include "util.h"
 
 void *
