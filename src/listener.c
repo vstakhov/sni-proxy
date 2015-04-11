@@ -87,6 +87,8 @@ struct ssl_alert {
 	uint8_t description;
 } _PACKED;
 
+extern void proxy_create(struct ssl_session *s);
+
 static inline unsigned int
 int_3byte_be(const unsigned char *p) {
 	return
@@ -152,6 +154,7 @@ backend_connect_cb(EV_P_ ev_io *w, int revents)
 	printf("connected to hostname: %s\n", ssl->hostname);
 	ssl->cl2bk = ringbuf_create(ssl->buflen, ssl->saved_buf, ssl->buflen);
 	ssl->bk2cl = ringbuf_create(ssl->buflen, NULL, 0);
+	proxy_create(ssl);
 }
 
 static void

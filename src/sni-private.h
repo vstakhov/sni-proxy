@@ -44,7 +44,8 @@ struct ssl_session {
 		ssl_state_alert_sent,
 		ssl_state_backend_selected,
 		ssl_state_backend_ready,
-		ssl_state_backend_greeting
+		ssl_state_backend_greeting,
+		ssl_state_proxy
 	} state;
 	int fd;
 	int bk_fd;
