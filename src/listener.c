@@ -87,6 +87,7 @@ struct ssl_alert {
 	uint8_t description;
 } _PACKED;
 
+extern int buflen;
 extern void proxy_create(struct ssl_session *s);
 
 static inline unsigned int
@@ -152,8 +153,8 @@ backend_connect_cb(EV_P_ ev_io *w, int revents)
 
 	ev_io_stop(ssl->loop, &ssl->bk_io);
 	printf("connected to hostname: %s\n", ssl->hostname);
-	ssl->cl2bk = ringbuf_create(ssl->buflen, ssl->saved_buf, ssl->buflen);
-	ssl->bk2cl = ringbuf_create(ssl->buflen, NULL, 0);
+	ssl->cl2bk = ringbuf_create(buflen, ssl->saved_buf, ssl->buflen);
+	ssl->bk2cl = ringbuf_create(buflen, NULL, 0);
 	proxy_create(ssl);
 }
 

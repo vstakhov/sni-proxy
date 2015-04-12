@@ -42,7 +42,7 @@
 
 static const int default_backend_port = 443;
 
-static int buflen = 16384;
+int buflen = 16384;
 static int port = 443;
 static const char *cf_name = "/etc/sni-proxy.conf";
 
