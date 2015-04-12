@@ -24,6 +24,7 @@
 
 #include <sys/types.h>
 #include <sys/param.h>
+#include <sys/socket.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -39,6 +40,40 @@
 #include "sni-private.h"
 
 static void proxy_state_machine(struct ssl_session *s);
+
+static void
+close_backend(struct ssl_session *s)
+{
+	ev_io_stop(s->loop, &s->bk_io);
+	close(s->bk_fd);
+	s->bk_fd = -1;
+
+	if (ringbuf_can_write(s->bk2cl)) {
+		/* We have some more data in bk2cl buffer */
+		shutdown(s->fd, SHUT_RD);
+	}
+	else {
+		/* Nothing to write, close connection completely */
+		s->state ++;
+	}
+}
+
+static void
+close_client(struct ssl_session *s)
+{
+	ev_io_stop(s->loop, &s->io);
+	close(s->fd);
+	s->fd = -1;
+
+	if (ringbuf_can_write(s->cl2bk)) {
+		/* We have some more data in cl2bk buffer */
+		shutdown(s->bk_fd, SHUT_RD);
+	}
+	else {
+		/* Nothing to write, close connection completely */
+		s->state ++;
+	}
+}
 
 static void
 proxy_cl_bk(EV_P_ ev_io *w, int revents)
@@ -57,21 +92,19 @@ proxy_cl_bk(EV_P_ ev_io *w, int revents)
 				continue;
 			}
 			/* XXX: Handle that */
-			s->state = ssl_state_proxy_client_closed;
-			break;
+			s->state ++;
+			close_client(s);
+			return;
 		}
 
 		if (r == 0) {
 			/* XXX: handle that */
-			s->state = ssl_state_proxy_client_closed;
+			s->state ++;
+			close_client(s);
+			return;
 		}
 
-		if (s->state == ssl_state_proxy) {
-			ringbuf_update_read(s->cl2bk, r);
-		}
-		else {
-			close(s->fd);
-		}
+		ringbuf_update_read(s->cl2bk, r);
 	}
 	if (revents & EV_WRITE) {
 		/* Can write to bk fd from cl2bk buffer */
@@ -82,21 +115,19 @@ proxy_cl_bk(EV_P_ ev_io *w, int revents)
 				continue;
 			}
 			/* XXX: Handle that */
-			s->state = ssl_state_proxy_backend_closed;
-			break;
+			s->state ++;
+			close_backend(s);
+			return;
 		}
 
 		if (r == 0) {
 			/* XXX: handle that */
-			s->state = ssl_state_proxy_backend_closed;
+			s->state ++;
+			close_backend(s);
+			return;
 		}
 
-		if (s->state == ssl_state_proxy) {
-			ringbuf_update_write(s->cl2bk, r);
-		}
-		else {
-			close(s->bk_fd);
-		}
+		ringbuf_update_write(s->cl2bk, r);
 	}
 }
 
@@ -116,20 +147,18 @@ proxy_bk_cl(EV_P_ ev_io *w, int revents)
 			if (errno == EINTR) {
 				continue;
 			}
-			s->state = ssl_state_proxy_backend_closed;
-			break;
+			s->state ++;
+			close_backend(s);
+			return;
 		}
 
 		if (r == 0) {
-			s->state = ssl_state_proxy_backend_closed;
+			s->state ++;
+			close_backend(s);
+			return;
 		}
 
-		if (s->state == ssl_state_proxy) {
-			ringbuf_update_read(s->bk2cl, r);
-		}
-		else {
-			close(s->bk_fd);
-		}
+		ringbuf_update_read(s->bk2cl, r);
 	}
 	if (revents & EV_WRITE) {
 		/* Can write to client fd from bk2cl buffer */
@@ -140,20 +169,18 @@ proxy_bk_cl(EV_P_ ev_io *w, int revents)
 				continue;
 			}
 			/* XXX: Handle that */
-			s->state = ssl_state_proxy_client_closed;
-			break;
+			s->state ++;
+			close_client(s);
+			return;
 		}
 
 		if (r == 0) {
-			s->state = ssl_state_proxy_client_closed;
+			s->state ++;
+			close_client(s);
+			return;
 		}
 
-		if (s->state == ssl_state_proxy) {
-			ringbuf_update_write(s->bk2cl, r);
-		}
-		else {
-			close(s->fd);
-		}
+		ringbuf_update_write(s->bk2cl, r);
 	}
 }
 
@@ -194,6 +221,10 @@ proxy_state_machine(struct ssl_session *s)
 {
 	int bk_ev = 0, cl_ev = 0;
 
+	if (s->state >= ssl_state_proxy_both_closed) {
+		terminate_session(s);
+		return;
+	}
 	/* Client to backend */
 	if (ringbuf_can_read(s->cl2bk)) {
 		/* Read data from client to cl2bk buffer */
@@ -213,14 +244,14 @@ proxy_state_machine(struct ssl_session *s)
 		cl_ev |= EV_WRITE;
 	}
 
-	if (bk_ev != 0) {
+	if (bk_ev != 0 && s->bk_fd != -1) {
 		ev_io_stop(s->loop, &s->bk_io);
-		ev_io_init(&s->bk_io, proxy_bk_cb, s->bk_fd, bk_ev);
+		ev_io_set(&s->bk_io, s->bk_fd, bk_ev);
 		ev_io_start(s->loop, &s->bk_io);
 	}
-	if (cl_ev != 0) {
+	if (cl_ev != 0 && s->fd != -1) {
 		ev_io_stop(s->loop, &s->io);
-		ev_io_init(&s->io, proxy_cl_cb, s->fd, cl_ev);
+		ev_io_set(&s->io, s->fd, cl_ev);
 		ev_io_start(s->loop, &s->io);
 	}
 }
@@ -230,5 +261,7 @@ proxy_create(struct ssl_session *s)
 {
 	s->state = ssl_state_proxy;
 
+	ev_io_init(&s->bk_io, proxy_bk_cb, s->bk_fd, EV_READ|EV_WRITE);
+	ev_io_init(&s->io, proxy_cl_cb, s->fd, EV_READ|EV_WRITE);
 	proxy_state_machine(s);
 }

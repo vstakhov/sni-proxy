@@ -108,8 +108,14 @@ int_2byte_be(const unsigned char *p) {
 void
 terminate_session(struct ssl_session *ssl)
 {
-	ev_io_stop(ssl->loop, &ssl->io);
-	close(ssl->fd);
+	if (ssl->fd != -1) {
+		ev_io_stop(ssl->loop, &ssl->io);
+		close(ssl->fd);
+	}
+	if (ssl->bk_fd != -1) {
+		ev_io_stop(ssl->loop, &ssl->bk_io);
+		close(ssl->bk_fd);
+	}
 	free(ssl->hostname);
 	free(ssl->saved_buf);
 	ringbuf_destroy(ssl->bk2cl);
@@ -429,6 +435,7 @@ accept_cb(EV_P_ ev_io *w, int revents)
 		ssl->backends = w->data;
 		ssl->loop = loop;
 		ssl->fd = nfd;
+		ssl->bk_fd = -1;
 		/* TLS 1.0 (SSL 3.1) */
 		ssl->ssl_version[0] = 0x3;
 		ssl->ssl_version[0] = 0x1;
