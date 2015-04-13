@@ -26,6 +26,7 @@
 #include <sys/param.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <unistd.h>
@@ -46,6 +47,8 @@ ringbuf_create(size_t len, const uint8_t *init, size_t initlen)
 	r->end = r->buf + real_len;
 	r->read_pos = initlen;
 	r->write_pos = 0;
+	r->wr_avail = initlen;
+	r->rd_avail = real_len - initlen;
 
 	if (init) {
 		memcpy(r->buf, init, initlen);
@@ -57,50 +60,30 @@ ringbuf_create(size_t len, const uint8_t *init, size_t initlen)
 bool
 ringbuf_can_read(struct ringbuf *r)
 {
-	int avail = 0;
-
-	if (r->read_pos >= r->write_pos) {
-		/* read_pos to end + start to write_pos */
-		avail = (r->end - r->buf) - r->read_pos + r->write_pos;
-	}
-	else {
-		/* read_pos to write_pos */
-		avail = r->write_pos - r->read_pos;
-	}
-
-	return avail > 0;
+	return r->rd_avail > 0;
 }
 
 bool
 ringbuf_can_write(struct ringbuf *r)
 {
-	int avail = 0;
-
-	if (r->read_pos >= r->write_pos) {
-		/* read_pos to write_pos */
-		avail = r->read_pos - r->write_pos;
-	}
-	else {
-		/* write_pos to end + start to read_pos */
-		avail = (r->end - r->buf) - r->write_pos + r->read_pos;
-	}
-
-	return avail > 0;
+	return r->wr_avail > 0;
 }
 
 const struct iovec*
 ringbuf_readvec(struct ringbuf *r, int *cnt)
 {
 	static struct iovec iov[2];
+	int p1;
 
 	if (r->read_pos >= r->write_pos) {
+		p1 = MIN(r->rd_avail, (r->end - r->buf) - r->read_pos);
 		/* read_pos to end + start to write_pos */
 		iov[0].iov_base = r->buf + r->read_pos;
-		iov[0].iov_len = (r->end - r->buf) - r->read_pos;
-		iov[1].iov_base = r->buf;
-		iov[1].iov_len = r->write_pos;
+		iov[0].iov_len = p1;
 
-		if (iov[1].iov_len > 0) {
+		if (r->rd_avail - p1 > 0) {
+			iov[1].iov_base = r->buf;
+			iov[1].iov_len = r->rd_avail - p1;
 			*cnt = 2;
 		}
 		else {
@@ -109,8 +92,9 @@ ringbuf_readvec(struct ringbuf *r, int *cnt)
 	}
 	else {
 		/* read_pos to write_pos */
+		p1 = r->rd_avail;
 		iov[0].iov_base = r->buf + r->read_pos;
-		iov[0].iov_len = r->write_pos - r->read_pos;
+		iov[0].iov_len = p1;
 		*cnt = 1;
 	}
 
@@ -121,21 +105,24 @@ const struct iovec*
 ringbuf_writevec(struct ringbuf *r, int *cnt)
 {
 	static struct iovec iov[2];
+	int p1;
 
 	if (r->read_pos >= r->write_pos) {
 		/* read_pos to write_pos */
+		p1 = r->wr_avail;
 		iov[0].iov_base = r->buf + r->write_pos;
-		iov[0].iov_len = r->read_pos - r->write_pos;
+		iov[0].iov_len = p1;
 		*cnt = 1;
 	}
 	else {
 		/* write_pos to end + start to read_pos */
+		p1 = MIN(r->wr_avail, (r->end - r->buf) - r->write_pos);
 		iov[0].iov_base = r->buf + r->write_pos;
-		iov[0].iov_len = (r->end - r->buf) - r->write_pos;
-		iov[1].iov_base = r->buf;
-		iov[1].iov_len = r->read_pos;
+		iov[0].iov_len = p1;
 
-		if (iov[1].iov_len > 0) {
+		if (r->wr_avail - p1 > 0) {
+			iov[1].iov_base = r->buf;
+			iov[1].iov_len = r->wr_avail - p1;
 			*cnt = 2;
 		}
 		else {
@@ -154,12 +141,16 @@ ringbuf_update_read(struct ringbuf *r, ssize_t len)
 	/* read_pos to end + start to write_pos */
 	p1 = (r->end - r->buf) - r->read_pos;
 	if (len >= p1) {
-		len -= p1;
-		r->read_pos = len;
+		r->read_pos = len - p1;
 	}
 	else {
 		r->read_pos += len;
 	}
+
+	r->wr_avail += len;
+	r->rd_avail -= len;
+
+	fprintf(stderr, "r: %d, ravail: %d, wavail: %d\n", (int)len, r->rd_avail, r->wr_avail);
 }
 
 void
@@ -169,12 +160,16 @@ ringbuf_update_write(struct ringbuf *r, ssize_t len)
 
 	p1 = (r->end - r->buf) - r->write_pos;
 	if (len >= p1) {
-		len -= p1;
-		r->write_pos = len;
+		r->write_pos = len - p1;
 	}
 	else {
 		r->write_pos += len;
 	}
+
+	r->rd_avail += len;
+	r->wr_avail -= len;
+
+	fprintf(stderr, "w: %d, ravail: %d, wavail: %d\n", (int)len, r->rd_avail, r->wr_avail);
 }
 
 void

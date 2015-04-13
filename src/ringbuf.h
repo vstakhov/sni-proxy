@@ -36,6 +36,8 @@ struct ringbuf {
 	uint8_t *end;
 	int read_pos;
 	int write_pos;
+	int wr_avail;
+	int rd_avail;
 };
 
 struct ringbuf* ringbuf_create(size_t len, const uint8_t *init, size_t initlen);

@@ -32,6 +32,7 @@
 #include <unistd.h>
 #include <sys/uio.h>
 #include <errno.h>
+#include <assert.h>
 
 #include "ev.h"
 #include "ucl.h"
@@ -87,47 +88,57 @@ proxy_cl_bk(EV_P_ ev_io *w, int revents)
 		/* Can read from client fd to cl2bk buffer */
 		iov = ringbuf_readvec(s->cl2bk, &cnt);
 
-		while ((r = readv(s->fd, iov, cnt)) == -1) {
-			if (errno == EINTR) {
-				continue;
+		if (iov[0].iov_len > 0) {
+			while ((r = readv(s->fd, iov, cnt)) == -1) {
+				if (errno == EINTR) {
+					continue;
+				}
+				else if (errno == EAGAIN) {
+					return;
+				}
+				/* XXX: Handle that */
+				s->state ++;
+				close_client(s);
+				return;
 			}
-			/* XXX: Handle that */
-			s->state ++;
-			close_client(s);
-			return;
-		}
 
-		if (r == 0) {
-			/* XXX: handle that */
-			s->state ++;
-			close_client(s);
-			return;
-		}
+			if (r == 0) {
+				/* XXX: handle that */
+				s->state ++;
+				close_client(s);
+				return;
+			}
 
-		ringbuf_update_read(s->cl2bk, r);
+			ringbuf_update_read(s->cl2bk, r);
+		}
 	}
 	if (revents & EV_WRITE) {
 		/* Can write to bk fd from cl2bk buffer */
 		iov = ringbuf_writevec(s->cl2bk, &cnt);
 
-		while ((r = writev(s->bk_fd, iov, cnt)) == -1) {
-			if (errno == EINTR) {
-				continue;
+		if (iov[0].iov_len > 0) {
+			while ((r = writev(s->bk_fd, iov, cnt)) == -1) {
+				if (errno == EINTR) {
+					continue;
+				}
+				else if (errno == EAGAIN) {
+					return;
+				}
+				/* XXX: Handle that */
+				s->state ++;
+				close_backend(s);
+				return;
 			}
-			/* XXX: Handle that */
-			s->state ++;
-			close_backend(s);
-			return;
-		}
 
-		if (r == 0) {
-			/* XXX: handle that */
-			s->state ++;
-			close_backend(s);
-			return;
-		}
+			if (r == 0) {
+				/* XXX: handle that */
+				s->state ++;
+				close_backend(s);
+				return;
+			}
 
-		ringbuf_update_write(s->cl2bk, r);
+			ringbuf_update_write(s->cl2bk, r);
+		}
 	}
 }
 
@@ -143,44 +154,54 @@ proxy_bk_cl(EV_P_ ev_io *w, int revents)
 		/* Can read from backend fd to bk2cl buffer */
 		iov = ringbuf_readvec(s->bk2cl, &cnt);
 
-		while ((r = readv(s->bk_fd, iov, cnt)) == -1) {
-			if (errno == EINTR) {
-				continue;
+		if (iov[0].iov_len > 0) {
+			while ((r = readv(s->bk_fd, iov, cnt)) == -1) {
+				if (errno == EINTR) {
+					continue;
+				}
+				else if (errno == EAGAIN) {
+					return;
+				}
+				s->state ++;
+				close_backend(s);
+				return;
 			}
-			s->state ++;
-			close_backend(s);
-			return;
-		}
 
-		if (r == 0) {
-			s->state ++;
-			close_backend(s);
-			return;
-		}
+			if (r == 0) {
+				s->state ++;
+				close_backend(s);
+				return;
+			}
 
-		ringbuf_update_read(s->bk2cl, r);
+			ringbuf_update_read(s->bk2cl, r);
+		}
 	}
 	if (revents & EV_WRITE) {
 		/* Can write to client fd from bk2cl buffer */
 		iov = ringbuf_writevec(s->bk2cl, &cnt);
 
-		while ((r = writev(s->fd, iov, cnt)) == -1) {
-			if (errno == EINTR) {
-				continue;
+		if (iov[0].iov_len > 0) {
+			while ((r = writev(s->fd, iov, cnt)) == -1) {
+				if (errno == EINTR) {
+					continue;
+				}
+				else if (errno == EAGAIN) {
+					return;
+				}
+				/* XXX: Handle that */
+				s->state ++;
+				close_client(s);
+				return;
 			}
-			/* XXX: Handle that */
-			s->state ++;
-			close_client(s);
-			return;
-		}
 
-		if (r == 0) {
-			s->state ++;
-			close_client(s);
-			return;
-		}
+			if (r == 0) {
+				s->state ++;
+				close_client(s);
+				return;
+			}
 
-		ringbuf_update_write(s->bk2cl, r);
+			ringbuf_update_write(s->bk2cl, r);
+		}
 	}
 }
 
@@ -189,11 +210,11 @@ proxy_bk_cb(EV_P_ ev_io *w, int revents)
 {
 	struct ssl_session *s = w->data;
 
-	if (revents & EV_READ) {
+	if (s->state < ssl_state_proxy_both_closed && (revents & EV_READ)) {
 		/* Backend to client */
 		proxy_bk_cl(loop, w, revents);
 	}
-	if (revents & EV_WRITE) {
+	if (s->state < ssl_state_proxy_both_closed && (revents & EV_WRITE)) {
 		/* Buffer to backend */
 		proxy_cl_bk(loop, w, revents);
 	}
@@ -205,11 +226,11 @@ proxy_cl_cb(EV_P_ ev_io *w, int revents)
 {
 	struct ssl_session *s = w->data;
 
-	if (revents & EV_READ) {
+	if (s->state < ssl_state_proxy_both_closed && (revents & EV_READ)) {
 		/* Client to backend */
 		proxy_cl_bk(loop, w, revents);
 	}
-	if (revents & EV_WRITE) {
+	if (s->state < ssl_state_proxy_both_closed && (revents & EV_WRITE)) {
 		/* Buffer to client */
 		proxy_bk_cl(loop, w, revents);
 	}
@@ -244,15 +265,21 @@ proxy_state_machine(struct ssl_session *s)
 		cl_ev |= EV_WRITE;
 	}
 
-	if (bk_ev != 0 && s->bk_fd != -1) {
+	if (s->bk_fd != -1) {
 		ev_io_stop(s->loop, &s->bk_io);
-		ev_io_set(&s->bk_io, s->bk_fd, bk_ev);
-		ev_io_start(s->loop, &s->bk_io);
+
+		if (bk_ev != 0) {
+			ev_io_set(&s->bk_io, s->bk_fd, bk_ev);
+			ev_io_start(s->loop, &s->bk_io);
+		}
 	}
-	if (cl_ev != 0 && s->fd != -1) {
+	if (s->fd != -1) {
 		ev_io_stop(s->loop, &s->io);
-		ev_io_set(&s->io, s->fd, cl_ev);
-		ev_io_start(s->loop, &s->io);
+
+		if (cl_ev > 0) {
+			ev_io_set(&s->io, s->fd, cl_ev);
+			ev_io_start(s->loop, &s->io);
+		}
 	}
 }
 
