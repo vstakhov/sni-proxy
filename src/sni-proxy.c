@@ -35,6 +35,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <signal.h>
 
 #include "ev.h"
 #include "ucl.h"
@@ -172,6 +173,8 @@ main(int argc, char **argv) {
 	if (elt) {
 		port = ucl_object_toint(elt);
 	}
+
+	signal(SIGPIPE, SIG_IGN);
 
 	if (!start_listen(loop, port, backends)) {
 		exit(EXIT_FAILURE);
