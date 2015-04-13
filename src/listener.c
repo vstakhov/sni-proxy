@@ -375,6 +375,7 @@ greet_cb(EV_P_ ev_io *w, int revents)
 	int r;
 	struct ssl_session *ssl = w->data;
 
+	ev_timer_stop(loop, &ssl->tm);
 	r = read(w->fd, buf, sizeof (buf));
 
 	if (r <= 0) {
@@ -383,6 +384,18 @@ greet_cb(EV_P_ ev_io *w, int revents)
 	else {
 		parse_ssl_greeting(ssl, buf, r);
 	}
+}
+
+/*
+ * Called if client failed to send SSL greeting in time
+ */
+static void
+timer_cb(EV_P_ ev_timer *w, int revents)
+{
+	struct ssl_session *ssl = w->data;
+
+	ev_timer_stop(loop, &ssl->tm);
+	terminate_session(ssl);
 }
 
 static int
@@ -441,6 +454,9 @@ accept_cb(EV_P_ ev_io *w, int revents)
 		ssl->ssl_version[0] = 0x1;
 		ev_io_init(&ssl->io, greet_cb, nfd, EV_READ);
 		ev_io_start(loop, &ssl->io);
+		ssl->tm.data = ssl;
+		ev_timer_init(&ssl->tm, timer_cb, 2.0, 1);
+		ev_timer_start(loop, &ssl->tm);
 	}
 	else {
 		fprintf(stderr, "accept failed: %d, '%s'\n", errno, strerror (errno));

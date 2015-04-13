@@ -43,6 +43,15 @@
 static void proxy_state_machine(struct ssl_session *s);
 
 static void
+timer_cb(EV_P_ ev_timer *w, int revents)
+{
+	struct ssl_session *ssl = w->data;
+
+	ev_timer_stop(loop, &ssl->tm);
+	terminate_session(ssl);
+}
+
+static void
 close_backend(struct ssl_session *s)
 {
 	ev_io_stop(s->loop, &s->bk_io);
@@ -52,10 +61,13 @@ close_backend(struct ssl_session *s)
 	if (ringbuf_can_write(s->bk2cl)) {
 		/* We have some more data in bk2cl buffer */
 		shutdown(s->fd, SHUT_RD);
+		ev_timer_init(&s->tm, timer_cb, 5.0, 1);
+		ev_timer_start(s->loop, &s->tm);
 	}
 	else {
 		/* Nothing to write, close connection completely */
 		s->state ++;
+		ev_timer_stop(s->loop, &s->tm);
 	}
 }
 
@@ -69,10 +81,13 @@ close_client(struct ssl_session *s)
 	if (ringbuf_can_write(s->cl2bk)) {
 		/* We have some more data in cl2bk buffer */
 		shutdown(s->bk_fd, SHUT_RD);
+		ev_timer_init(&s->tm, timer_cb, 5.0, 1);
+		ev_timer_start(s->loop, &s->tm);
 	}
 	else {
 		/* Nothing to write, close connection completely */
 		s->state ++;
+		ev_timer_stop(s->loop, &s->tm);
 	}
 }
 
@@ -243,6 +258,7 @@ proxy_state_machine(struct ssl_session *s)
 	int bk_ev = 0, cl_ev = 0;
 
 	if (s->state >= ssl_state_proxy_both_closed) {
+		ev_timer_stop(s->loop, &s->tm);
 		terminate_session(s);
 		return;
 	}

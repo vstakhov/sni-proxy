@@ -33,6 +33,7 @@ struct ssl_session {
 	const ucl_object_t *backends;
 	ev_io io;
 	ev_io bk_io;
+	ev_timer tm;
 	struct ev_loop *loop;
 	char *hostname;
 	struct ringbuf *cl2bk;
