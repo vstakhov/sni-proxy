@@ -116,6 +116,7 @@ terminate_session(struct ssl_session *ssl)
 		ev_io_stop(ssl->loop, &ssl->bk_io);
 		close(ssl->bk_fd);
 	}
+	ev_timer_stop(ssl->loop, &ssl->tm);
 	free(ssl->hostname);
 	free(ssl->saved_buf);
 	ringbuf_destroy(ssl->bk2cl);

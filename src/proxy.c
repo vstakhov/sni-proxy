@@ -54,40 +54,44 @@ timer_cb(EV_P_ ev_timer *w, int revents)
 static void
 close_backend(struct ssl_session *s)
 {
-	ev_io_stop(s->loop, &s->bk_io);
-	close(s->bk_fd);
-	s->bk_fd = -1;
+	if (s->bk_fd != -1) {
+		ev_io_stop(s->loop, &s->bk_io);
+		close(s->bk_fd);
+		s->bk_fd = -1;
 
-	if (ringbuf_can_write(s->bk2cl)) {
-		/* We have some more data in bk2cl buffer */
-		shutdown(s->fd, SHUT_RD);
-		ev_timer_init(&s->tm, timer_cb, 5.0, 1);
-		ev_timer_start(s->loop, &s->tm);
-	}
-	else {
-		/* Nothing to write, close connection completely */
-		s->state ++;
-		ev_timer_stop(s->loop, &s->tm);
+		if (ringbuf_can_write(s->bk2cl)) {
+			/* We have some more data in bk2cl buffer */
+			shutdown(s->fd, SHUT_RD);
+			ev_timer_init(&s->tm, timer_cb, 5.0, 1);
+			ev_timer_start(s->loop, &s->tm);
+		}
+		else {
+			/* Nothing to write, close connection completely */
+			s->state ++;
+			ev_timer_stop(s->loop, &s->tm);
+		}
 	}
 }
 
 static void
 close_client(struct ssl_session *s)
 {
-	ev_io_stop(s->loop, &s->io);
-	close(s->fd);
-	s->fd = -1;
+	if (s->fd != -1) {
+		ev_io_stop(s->loop, &s->io);
+		close(s->fd);
+		s->fd = -1;
 
-	if (ringbuf_can_write(s->cl2bk)) {
-		/* We have some more data in cl2bk buffer */
-		shutdown(s->bk_fd, SHUT_RD);
-		ev_timer_init(&s->tm, timer_cb, 5.0, 1);
-		ev_timer_start(s->loop, &s->tm);
-	}
-	else {
-		/* Nothing to write, close connection completely */
-		s->state ++;
-		ev_timer_stop(s->loop, &s->tm);
+		if (ringbuf_can_write(s->cl2bk)) {
+			/* We have some more data in cl2bk buffer */
+			shutdown(s->bk_fd, SHUT_RD);
+			ev_timer_init(&s->tm, timer_cb, 5.0, 1);
+			ev_timer_start(s->loop, &s->tm);
+		}
+		else {
+			/* Nothing to write, close connection completely */
+			s->state ++;
+			ev_timer_stop(s->loop, &s->tm);
+		}
 	}
 }
 
@@ -225,11 +229,11 @@ proxy_bk_cb(EV_P_ ev_io *w, int revents)
 {
 	struct ssl_session *s = w->data;
 
-	if (s->state < ssl_state_proxy_both_closed && (revents & EV_READ)) {
+	if (s->bk_fd != -1 && (revents & EV_READ)) {
 		/* Backend to client */
 		proxy_bk_cl(loop, w, revents);
 	}
-	if (s->state < ssl_state_proxy_both_closed && (revents & EV_WRITE)) {
+	if (s->bk_fd != -1 && (revents & EV_WRITE)) {
 		/* Buffer to backend */
 		proxy_cl_bk(loop, w, revents);
 	}
@@ -241,11 +245,11 @@ proxy_cl_cb(EV_P_ ev_io *w, int revents)
 {
 	struct ssl_session *s = w->data;
 
-	if (s->state < ssl_state_proxy_both_closed && (revents & EV_READ)) {
+	if (s->fd != -1 && (revents & EV_READ)) {
 		/* Client to backend */
 		proxy_cl_bk(loop, w, revents);
 	}
-	if (s->state < ssl_state_proxy_both_closed && (revents & EV_WRITE)) {
+	if (s->fd != -1 && (revents & EV_WRITE)) {
 		/* Buffer to client */
 		proxy_bk_cl(loop, w, revents);
 	}
