@@ -75,26 +75,17 @@ ringbuf_readvec(struct ringbuf *r, int *cnt)
 	static struct iovec iov[2];
 	int p1;
 
-	if (r->read_pos >= r->write_pos) {
-		p1 = MIN(r->rd_avail, (r->end - r->buf) - r->read_pos);
-		/* read_pos to end + start to write_pos */
-		iov[0].iov_base = r->buf + r->read_pos;
-		iov[0].iov_len = p1;
+	p1 = MIN(r->rd_avail, (r->end - r->buf) - r->read_pos);
+	/* read_pos to end + start to write_pos */
+	iov[0].iov_base = r->buf + r->read_pos;
+	iov[0].iov_len = p1;
 
-		if (r->rd_avail - p1 > 0) {
-			iov[1].iov_base = r->buf;
-			iov[1].iov_len = r->rd_avail - p1;
-			*cnt = 2;
-		}
-		else {
-			*cnt = 1;
-		}
+	if (r->rd_avail - p1 > 0) {
+		iov[1].iov_base = r->buf;
+		iov[1].iov_len = r->rd_avail - p1;
+		*cnt = 2;
 	}
 	else {
-		/* read_pos to write_pos */
-		p1 = r->rd_avail;
-		iov[0].iov_base = r->buf + r->read_pos;
-		iov[0].iov_len = p1;
 		*cnt = 1;
 	}
 
@@ -107,27 +98,18 @@ ringbuf_writevec(struct ringbuf *r, int *cnt)
 	static struct iovec iov[2];
 	int p1;
 
-	if (r->read_pos >= r->write_pos) {
-		/* read_pos to write_pos */
-		p1 = r->wr_avail;
-		iov[0].iov_base = r->buf + r->write_pos;
-		iov[0].iov_len = p1;
-		*cnt = 1;
+	/* write_pos to end + start to read_pos */
+	p1 = MIN(r->wr_avail, (r->end - r->buf) - r->write_pos);
+	iov[0].iov_base = r->buf + r->write_pos;
+	iov[0].iov_len = p1;
+
+	if (r->wr_avail - p1 > 0) {
+		iov[1].iov_base = r->buf;
+		iov[1].iov_len = r->wr_avail - p1;
+		*cnt = 2;
 	}
 	else {
-		/* write_pos to end + start to read_pos */
-		p1 = MIN(r->wr_avail, (r->end - r->buf) - r->write_pos);
-		iov[0].iov_base = r->buf + r->write_pos;
-		iov[0].iov_len = p1;
-
-		if (r->wr_avail - p1 > 0) {
-			iov[1].iov_base = r->buf;
-			iov[1].iov_len = r->wr_avail - p1;
-			*cnt = 2;
-		}
-		else {
-			*cnt = 1;
-		}
+		*cnt = 1;
 	}
 
 	return iov;
@@ -150,7 +132,10 @@ ringbuf_update_read(struct ringbuf *r, ssize_t len)
 	r->wr_avail += len;
 	r->rd_avail -= len;
 
-	fprintf(stderr, "r: %d, ravail: %d, wavail: %d\n", (int)len, r->rd_avail, r->wr_avail);
+#ifdef RBUF_DEBUG
+	fprintf(stderr, "r: %d, ravail: %d, wavail: %d, rpos: %d, wpos: %d\n",
+			(int)len, r->rd_avail, r->wr_avail, r->read_pos, r->write_pos);
+#endif
 }
 
 void
@@ -169,7 +154,10 @@ ringbuf_update_write(struct ringbuf *r, ssize_t len)
 	r->rd_avail += len;
 	r->wr_avail -= len;
 
-	fprintf(stderr, "w: %d, ravail: %d, wavail: %d\n", (int)len, r->rd_avail, r->wr_avail);
+#ifdef RBUF_DEBUG
+	fprintf(stderr, "w: %d, ravail: %d, wavail: %d, rpos: %d, wpos: %d\n",
+			(int)len, r->rd_avail, r->wr_avail, r->read_pos, r->write_pos);
+#endif
 }
 
 void
