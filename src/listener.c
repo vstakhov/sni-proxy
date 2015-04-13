@@ -466,7 +466,7 @@ accept_cb(EV_P_ ev_io *w, int revents)
 static int
 listen_on(const struct sockaddr *sa, socklen_t slen)
 {
-	int sock, on, ofl;
+	int sock, on = 1, ofl;
 
 	sock = socket(sa->sa_family, SOCK_STREAM, 0);
 
