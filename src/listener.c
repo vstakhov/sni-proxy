@@ -253,6 +253,7 @@ parse_extension(struct ssl_session *ssl, const unsigned char *pos, int remain)
 		}
 
 		hlen = int_2byte_be(sni->hlen);
+		free(ssl->hostname);
 		ssl->hostname = xmalloc(hlen + 1);
 		memcpy(ssl->hostname, sni->host, hlen);
 		ssl->hostlen = hlen;
