@@ -129,6 +129,7 @@ alert_cb(EV_P_ ev_io *w, int revents)
 {
 	struct ssl_alert alert;
 	struct ssl_session *ssl = w->data;
+	size_t ret;
 
 	if (ssl->state == ssl_state_alert) {
 		alert.type = tls_alert;
@@ -138,7 +139,10 @@ alert_cb(EV_P_ ev_io *w, int revents)
 		alert.description = tls_alert_description;
 		ssl->state = ssl_state_alert_sent;
 
-		write(ssl->fd, &alert, sizeof(alert));
+		ret = write(ssl->fd, &alert, sizeof(alert));
+		if (ret != sizeof(alert)) {
+			terminate_session(ssl);
+		}
 	}
 	else {
 		terminate_session(ssl);
@@ -253,6 +257,7 @@ parse_extension(struct ssl_session *ssl, const unsigned char *pos, int remain)
 		}
 
 		hlen = int_2byte_be(sni->hlen);
+		free(ssl->hostname);
 		ssl->hostname = xmalloc(hlen + 1);
 		memcpy(ssl->hostname, sni->host, hlen);
 		ssl->hostlen = hlen;
@@ -412,9 +417,9 @@ accept_from_socket(int sock)
 		return -1;
 	}
 
-	ofl = fcntl(sock, F_GETFL, 0);
+	ofl = fcntl(nfd, F_GETFL, 0);
 
-	if (fcntl(sock, F_SETFL, ofl | O_NONBLOCK) == -1) {
+	if (fcntl(nfd, F_SETFL, ofl | O_NONBLOCK) == -1) {
 		close(sock);
 
 		goto out;
