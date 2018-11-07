@@ -129,6 +129,7 @@ alert_cb(EV_P_ ev_io *w, int revents)
 {
 	struct ssl_alert alert;
 	struct ssl_session *ssl = w->data;
+	size_t ret;
 
 	if (ssl->state == ssl_state_alert) {
 		alert.type = tls_alert;
@@ -138,7 +139,10 @@ alert_cb(EV_P_ ev_io *w, int revents)
 		alert.description = tls_alert_description;
 		ssl->state = ssl_state_alert_sent;
 
-		write(ssl->fd, &alert, sizeof(alert));
+		ret = write(ssl->fd, &alert, sizeof(alert));
+		if (ret != sizeof(alert)) {
+			terminate_session(ssl);
+		}
 	}
 	else {
 		terminate_session(ssl);
