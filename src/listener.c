@@ -413,9 +413,9 @@ accept_from_socket(int sock)
 		return -1;
 	}
 
-	ofl = fcntl(sock, F_GETFL, 0);
+	ofl = fcntl(nfd, F_GETFL, 0);
 
-	if (fcntl(sock, F_SETFL, ofl | O_NONBLOCK) == -1) {
+	if (fcntl(nfd, F_SETFL, ofl | O_NONBLOCK) == -1) {
 		close(sock);
 
 		goto out;
